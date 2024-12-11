@@ -1,0 +1,10 @@
+# Environment folders
+.cache/
+w2w/
+
+# Job logs
+slurm_jobdir/
+
+# Outfiles
+example/
+output/
