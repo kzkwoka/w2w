@@ -23,7 +23,10 @@ cd weights2weights
 ln -s $cache_path/files ./files
 ln -s $cache_path/weights_datasets ./weights_datasets
 
-
+# cd $SCRATCH
+# git clone https://github.com/EleutherAI/sae.git
+# cd sae
+# pip install .
 ```
 
 ## Working in interactive mode
