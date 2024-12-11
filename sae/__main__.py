@@ -123,8 +123,29 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
     return model, dataset
 
 
-def load_dataset(args: RunConfig) -> Dataset | MemmapDataset:
-    pass
+def load_custom_dataset(args: RunConfig) -> Dataset | MemmapDataset:
+    try:
+        dataset = load_dataset(
+            args.dataset,
+            split=args.split,
+            # TODO: Maybe set this to False by default? But RPJ requires it.
+            trust_remote_code=True,
+        )
+    except ValueError as e:
+        # Automatically use load_from_disk if appropriate
+        if "load_from_disk" in str(e):
+            dataset = Dataset.load_from_disk(args.dataset, keep_in_memory=False)
+        else:
+            raise e
+
+    assert isinstance(dataset, Dataset)
+    print(f"Shuffling dataset with seed {args.seed}")
+    dataset = dataset.shuffle(args.seed)
+
+    dataset = dataset.with_format("torch")
+    if limit := args.max_examples:
+        dataset = dataset.select(range(limit))
+    return dataset
 
 def run():
     local_rank = os.environ.get("LOCAL_RANK")
@@ -143,12 +164,12 @@ def run():
     # Awkward hack to prevent other ranks from duplicating data preprocessing
     if not ddp or rank == 0:
         # model, dataset = load_artifacts(args, rank)
-        dataset = load_dataset(args)
+        dataset = load_custom_dataset(args)
     if ddp:
         dist.barrier()
         if rank != 0:
             # model, dataset = load_artifacts(args, rank)
-            dataset = load_dataset(args)
+            dataset = load_custom_dataset(args)
         dataset = dataset.shard(dist.get_world_size(), rank)
 
     # Prevent ranks other than 0 from printing

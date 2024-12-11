@@ -119,9 +119,9 @@ class SaeTrainer:
         num_sae_params = sum(
             p.numel() for s in self.saes.values() for p in s.parameters()
         )
-        num_model_params = sum(p.numel() for p in self.model.parameters())
+        # num_model_params = sum(p.numel() for p in self.model.parameters())
         print(f"Number of SAE parameters: {num_sae_params:_}")
-        print(f"Number of model parameters: {num_model_params:_}")
+        # print(f"Number of model parameters: {num_model_params:_}")
 
         num_batches = len(self.dataset) // self.cfg.batch_size
         if self.global_step > 0:
@@ -160,25 +160,8 @@ class SaeTrainer:
 
         input_dict: dict[str, Tensor] = {}
         output_dict: dict[str, Tensor] = {}
-        name_to_module = {
-            name: self.model.get_submodule(name) for name in self.cfg.hookpoints
-        }
+        
         maybe_wrapped: dict[str, DDP] | dict[str, Sae] = {}
-        module_to_name = {v: k for k, v in name_to_module.items()}
-
-        def hook(module: nn.Module, inputs, outputs):
-            # Maybe unpack tuple inputs and outputs
-            if isinstance(inputs, tuple):
-                inputs = inputs[0]
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
-
-            name = module_to_name[module]
-            output_dict[name] = outputs.flatten(0, 1)
-
-            # Remember the inputs if we're training a transcoder
-            if self.cfg.transcode:
-                input_dict[name] = inputs.flatten(0, 1)
 
         for batch in dl:
             input_dict.clear()
@@ -186,17 +169,10 @@ class SaeTrainer:
 
             # Bookkeeping for dead feature detection
             num_tokens_in_step += batch["input_ids"].numel()
-
-            # Forward pass on the model to get the next batch of activations            
-            handles = [
-                mod.register_forward_hook(hook) for mod in name_to_module.values()
-            ]
-            try:
-                with torch.no_grad():
-                    self.model(batch["input_ids"].to(device))
-            finally:
-                for handle in handles:
-                    handle.remove()
+            
+            # Load data to input and output dict
+            input_dict = {0: batch}
+            output_dict = {0: batch}
 
             if self.cfg.distribute_modules:
                 input_dict = self.scatter_hiddens(input_dict)
