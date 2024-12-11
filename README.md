@@ -8,6 +8,8 @@ conda create -p $SCRATCH/w2w -y
 conda activate $SCRATCH/w2w
 conda install python==3.12.3 -y
 cd $SCRATCH
+pip install -r requirements.txt
+
 git clone https://github.com/snap-research/weights2weights.git
 # git clone https://huggingface.co/snap-research/weights2weights hfweights2weights 
 
@@ -20,6 +22,8 @@ print(path)
 cd weights2weights
 ln -s $cache_path/files ./files
 ln -s $cache_path/weights_datasets ./weights_datasets
+
+
 ```
 
 ## Working in interactive mode
