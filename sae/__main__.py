@@ -20,12 +20,12 @@ class RunConfig(TrainConfig):
     """Device to be used for training."""
     
     dataset: str = field(
-        default="togethercomputer/RedPajama-Data-1T-Sample",
+        default="/net/tscratch/people/plgkingak/weights2weights/weights_datasets/mid_block",
         positional=True,
     )
     """Path to the dataset to use for training."""
 
-    input_width: int
+    input_width: int = 9728
     """Input tensor length to use for training."""
 
     split: str = "train"

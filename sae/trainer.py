@@ -32,11 +32,11 @@ class SaeTrainer:
         assert isinstance(dataset, Sized)
         num_examples = len(dataset)
 
-        device = self.cfg.device
+        self.device = self.cfg.device
         input_widths = self.cfg.input_width
 
         self.saes = {
-            0: Sae(input_widths)
+            0: Sae(input_widths, cfg.sae, self.device)
         }
         # Re-initialize the decoder for transcoder training. By default the Sae class
         # initializes the decoder with the transpose of the encoder.
@@ -68,7 +68,7 @@ class SaeTrainer:
 
         self.global_step = 0
         self.num_tokens_since_fired = {
-            name: torch.zeros(sae.num_latents, device=device, dtype=torch.long)
+            name: torch.zeros(sae.num_latents, device=self.device, dtype=torch.long)
             for name, sae in self.saes.items()
         }
         self.optimizer = Adam(pgs)
@@ -168,11 +168,11 @@ class SaeTrainer:
             output_dict.clear()
 
             # Bookkeeping for dead feature detection
-            num_tokens_in_step += batch["input_ids"].numel()
+            num_tokens_in_step += batch["data"].numel()
             
             # Load data to input and output dict
-            input_dict = {0: batch}
-            output_dict = {0: batch}
+            input_dict = {0: batch["data"].to(self.device)}
+            output_dict = {0: batch["data"].to(self.device)}
 
             if self.cfg.distribute_modules:
                 input_dict = self.scatter_hiddens(input_dict)

@@ -1,9 +1,15 @@
 # Environment folders
 .cache/
+.vscode/
 w2w/
+*__pycache__/
 
 # Job logs
 slurm_jobdir/
+
+#Checkpoints
+sae-ckpts/
+wandb/
 
 # Outfiles
 example/
