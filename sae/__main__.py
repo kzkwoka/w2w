@@ -16,17 +16,17 @@ from .trainer import SaeTrainer, TrainConfig
 
 @dataclass
 class RunConfig(TrainConfig):
-    model: str = field(
-        default="EleutherAI/pythia-160m",
-        positional=True,
-    )
-    """Name of the model to train."""
-
+    device: str = "cuda"
+    """Device to be used for training."""
+    
     dataset: str = field(
         default="togethercomputer/RedPajama-Data-1T-Sample",
         positional=True,
     )
     """Path to the dataset to use for training."""
+
+    input_width: int
+    """Input tensor length to use for training."""
 
     split: str = "train"
     """Dataset split to use for training."""
@@ -123,6 +123,9 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
     return model, dataset
 
 
+def load_dataset(args: RunConfig) -> Dataset | MemmapDataset:
+    pass
+
 def run():
     local_rank = os.environ.get("LOCAL_RANK")
     ddp = local_rank is not None
@@ -139,24 +142,26 @@ def run():
 
     # Awkward hack to prevent other ranks from duplicating data preprocessing
     if not ddp or rank == 0:
-        model, dataset = load_artifacts(args, rank)
+        # model, dataset = load_artifacts(args, rank)
+        dataset = load_dataset(args)
     if ddp:
         dist.barrier()
         if rank != 0:
-            model, dataset = load_artifacts(args, rank)
+            # model, dataset = load_artifacts(args, rank)
+            dataset = load_dataset(args)
         dataset = dataset.shard(dist.get_world_size(), rank)
 
     # Prevent ranks other than 0 from printing
     with nullcontext() if rank == 0 else redirect_stdout(None):
         print(f"Training on '{args.dataset}' (split '{args.split}')")
-        print(f"Storing model weights in {model.dtype}")
+        # print(f"Storing model weights in {model.dtype}")
 
-        trainer = SaeTrainer(args, dataset, model)
+        trainer = SaeTrainer(args, dataset)
         if args.resume:
             trainer.load_state(args.run_name or "sae-ckpts")
         elif args.finetune:
             for name, sae in trainer.saes.items():
-                load_model(sae, f"{args.finetune}/{name}/sae.safetensors", device=str(model.device))
+                load_model(sae, f"{args.finetune}/{name}/sae.safetensors", device=str(args.device))
 
         trainer.fit()
 

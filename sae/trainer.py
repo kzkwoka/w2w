@@ -22,52 +22,21 @@ from .utils import geometric_median, get_layer_list, resolve_widths
 
 class SaeTrainer:
     def __init__(
-        self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset, model: PreTrainedModel
+        self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset
     ):
-        if cfg.hookpoints:
-            assert not cfg.layers, "Cannot specify both `hookpoints` and `layers`."
-
-            # Replace wildcard patterns
-            raw_hookpoints = []
-            for name, _ in model.named_modules():
-                if any(fnmatchcase(name, pat) for pat in cfg.hookpoints):
-                    raw_hookpoints.append(name)
-
-            # Natural sort to impose a consistent order
-            cfg.hookpoints = natsorted(raw_hookpoints)
-        else:
-            # If no layers are specified, train on all of them
-            if not cfg.layers:
-                N = model.config.num_hidden_layers
-                cfg.layers = list(range(0, N, cfg.layer_stride))
-
-            # Now convert layers to hookpoints
-            layers_name, _ = get_layer_list(model)
-            cfg.hookpoints = [f"{layers_name}.{i}" for i in cfg.layers]
 
         self.cfg = cfg
         self.dataset = dataset
         self.distribute_modules()
 
-        N = len(cfg.hookpoints)
         assert isinstance(dataset, Sized)
         num_examples = len(dataset)
 
-        device = model.device
-        input_widths = resolve_widths(model, cfg.hookpoints)
-        unique_widths = set(input_widths.values())
+        device = self.cfg.device
+        input_widths = self.cfg.input_width
 
-        if cfg.distribute_modules and len(unique_widths) > 1:
-            # dist.all_to_all requires tensors to have the same shape across ranks
-            raise ValueError(
-                f"All modules must output tensors of the same shape when using "
-                f"`distribute_modules=True`, got {unique_widths}"
-            )
-
-        self.model = model
         self.saes = {
-            hook: Sae(input_widths[hook], cfg.sae, device)
-            for hook in self.local_hookpoints()
+            0: Sae(input_widths)
         }
         # Re-initialize the decoder for transcoder training. By default the Sae class
         # initializes the decoder with the transpose of the encoder.
@@ -109,7 +78,7 @@ class SaeTrainer:
 
     def load_state(self, path: str):
         """Load the trainer state from disk."""
-        device = self.model.device
+        device = self.device
 
         # Load the train state first so we can print the step number
         train_state = torch.load(f"{path}/state.pt", map_location=device, weights_only=True)
@@ -163,7 +132,7 @@ class SaeTrainer:
         else:
             ds = self.dataset
 
-        device = self.model.device
+        device = self.device
         dl = DataLoader(
             ds, # type: ignore
             batch_size=self.cfg.batch_size,
