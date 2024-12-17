@@ -163,159 +163,161 @@ class SaeTrainer:
         
         maybe_wrapped: dict[str, DDP] | dict[str, Sae] = {}
 
-        for batch in dl:
-            input_dict.clear()
-            output_dict.clear()
-
-            # Bookkeeping for dead feature detection
-            num_tokens_in_step += batch["data"].numel()
+        for _ in range(self.cfg.num_epochs):
             
-            # Load data to input and output dict
-            input_dict = {0: batch["data"].to(self.device)}
-            output_dict = {0: batch["data"].to(self.device)}
+            for batch in dl:
+                input_dict.clear()
+                output_dict.clear()
 
-            if self.cfg.distribute_modules:
-                input_dict = self.scatter_hiddens(input_dict)
-                output_dict = self.scatter_hiddens(output_dict)
+                # Bookkeeping for dead feature detection
+                num_tokens_in_step += batch["data"].numel()
+                
+                # Load data to input and output dict
+                input_dict = {0: batch["data"].to(self.device)}
+                output_dict = {0: batch["data"].to(self.device)}
 
-            for name, outputs in output_dict.items():
-                # 'inputs' is distinct from outputs iff we're transcoding
-                inputs = input_dict.get(name, outputs)
-                raw = self.saes[name]           # 'raw' never has a DDP wrapper
+                if self.cfg.distribute_modules:
+                    input_dict = self.scatter_hiddens(input_dict)
+                    output_dict = self.scatter_hiddens(output_dict)
 
-                # On the first iteration, initialize the decoder bias
-                if self.global_step == 0:
-                    # NOTE: The all-cat here could conceivably cause an OOM in some
-                    # cases, but it's unlikely to be a problem with small world sizes.
-                    # We could avoid this by "approximating" the geometric median
-                    # across all ranks with the mean (median?) of the geometric medians
-                    # on each rank. Not clear if that would hurt performance.
-                    median = geometric_median(self.maybe_all_cat(outputs))
-                    raw.b_dec.data = median.to(raw.dtype)
+                for name, outputs in output_dict.items():
+                    # 'inputs' is distinct from outputs iff we're transcoding
+                    inputs = input_dict.get(name, outputs)
+                    raw = self.saes[name]           # 'raw' never has a DDP wrapper
 
-                if not maybe_wrapped:
-                    # Wrap the SAEs with Distributed Data Parallel. We have to do this
-                    # after we set the decoder bias, otherwise DDP will not register
-                    # gradients flowing to the bias after the first step.
-                    maybe_wrapped = (
-                        {
-                            name: DDP(sae, device_ids=[dist.get_rank()])
-                            for name, sae in self.saes.items()
-                        }
-                        if ddp
-                        else self.saes
-                    )
+                    # On the first iteration, initialize the decoder bias
+                    if self.global_step == 0:
+                        # NOTE: The all-cat here could conceivably cause an OOM in some
+                        # cases, but it's unlikely to be a problem with small world sizes.
+                        # We could avoid this by "approximating" the geometric median
+                        # across all ranks with the mean (median?) of the geometric medians
+                        # on each rank. Not clear if that would hurt performance.
+                        median = geometric_median(self.maybe_all_cat(outputs))
+                        raw.b_dec.data = median.to(raw.dtype)
 
-                # Make sure the W_dec is still unit-norm if we're autoencoding
-                if raw.cfg.normalize_decoder and not self.cfg.transcode:
-                    raw.set_decoder_norm_to_unit_norm()
-
-                acc_steps = self.cfg.grad_acc_steps * self.cfg.micro_acc_steps
-                denom = acc_steps * self.cfg.wandb_log_frequency
-                wrapped = maybe_wrapped[name]
-
-                # Save memory by chunking the activations
-                in_chunks = inputs.chunk(self.cfg.micro_acc_steps)
-                out_chunks = outputs.chunk(self.cfg.micro_acc_steps)
-                for in_chunk, out_chunk in zip(in_chunks, out_chunks):
-                    out = wrapped(
-                        x=in_chunk,
-                        y=out_chunk,
-                        dead_mask=(
-                            self.num_tokens_since_fired[name]
-                            > self.cfg.dead_feature_threshold
-                            if self.cfg.auxk_alpha > 0
-                            else None
-                        ),
-                    )
-
-                    avg_fvu[name] += float(
-                        self.maybe_all_reduce(out.fvu.detach()) / denom
-                    )
-                    if self.cfg.auxk_alpha > 0:
-                        avg_auxk_loss[name] += float(
-                            self.maybe_all_reduce(out.auxk_loss.detach()) / denom
-                        )
-                    if self.cfg.sae.multi_topk:
-                        avg_multi_topk_fvu[name] += float(
-                            self.maybe_all_reduce(out.multi_topk_fvu.detach()) / denom
-                        )
-
-                    loss = out.fvu + self.cfg.auxk_alpha * out.auxk_loss + out.multi_topk_fvu / 8
-                    loss.div(acc_steps).backward()
-
-                    # Update the did_fire mask
-                    did_fire[name][out.latent_indices.flatten()] = True
-                    self.maybe_all_reduce(did_fire[name], "max")  # max is boolean "any"
-
-                # Clip gradient norm independently for each SAE
-                torch.nn.utils.clip_grad_norm_(raw.parameters(), 1.0)
-
-            # Check if we need to actually do a training step
-            step, substep = divmod(self.global_step + 1, self.cfg.grad_acc_steps)
-            if substep == 0:
-                if self.cfg.sae.normalize_decoder and not self.cfg.transcode:
-                    for sae in self.saes.values():
-                        sae.remove_gradient_parallel_to_decoder_directions()
-
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                self.lr_scheduler.step()
-
-                ###############
-                with torch.no_grad():
-                    # Update the dead feature mask
-                    for name, counts in self.num_tokens_since_fired.items():
-                        counts += num_tokens_in_step
-                        counts[did_fire[name]] = 0
-
-                    # Reset stats for this step
-                    num_tokens_in_step = 0
-                    for mask in did_fire.values():
-                        mask.zero_()
-
-                if (
-                    self.cfg.log_to_wandb
-                    and (step + 1) % self.cfg.wandb_log_frequency == 0
-                ):
-                    info = {}
-
-                    for name in self.saes:
-                        mask = (
-                            self.num_tokens_since_fired[name]
-                            > self.cfg.dead_feature_threshold
-                        )
-
-                        info.update(
+                    if not maybe_wrapped:
+                        # Wrap the SAEs with Distributed Data Parallel. We have to do this
+                        # after we set the decoder bias, otherwise DDP will not register
+                        # gradients flowing to the bias after the first step.
+                        maybe_wrapped = (
                             {
-                                f"fvu/{name}": avg_fvu[name],
-                                f"dead_pct/{name}": mask.mean(
-                                    dtype=torch.float32
-                                ).item(),
+                                name: DDP(sae, device_ids=[dist.get_rank()])
+                                for name, sae in self.saes.items()
                             }
+                            if ddp
+                            else self.saes
+                        )
+
+                    # Make sure the W_dec is still unit-norm if we're autoencoding
+                    if raw.cfg.normalize_decoder and not self.cfg.transcode:
+                        raw.set_decoder_norm_to_unit_norm()
+
+                    acc_steps = self.cfg.grad_acc_steps * self.cfg.micro_acc_steps
+                    denom = acc_steps * self.cfg.wandb_log_frequency
+                    wrapped = maybe_wrapped[name]
+
+                    # Save memory by chunking the activations
+                    in_chunks = inputs.chunk(self.cfg.micro_acc_steps)
+                    out_chunks = outputs.chunk(self.cfg.micro_acc_steps)
+                    for in_chunk, out_chunk in zip(in_chunks, out_chunks):
+                        out = wrapped(
+                            x=in_chunk,
+                            y=out_chunk,
+                            dead_mask=(
+                                self.num_tokens_since_fired[name]
+                                > self.cfg.dead_feature_threshold
+                                if self.cfg.auxk_alpha > 0
+                                else None
+                            ),
+                        )
+
+                        avg_fvu[name] += float(
+                            self.maybe_all_reduce(out.fvu.detach()) / denom
                         )
                         if self.cfg.auxk_alpha > 0:
-                            info[f"auxk/{name}"] = avg_auxk_loss[name]
+                            avg_auxk_loss[name] += float(
+                                self.maybe_all_reduce(out.auxk_loss.detach()) / denom
+                            )
                         if self.cfg.sae.multi_topk:
-                            info[f"multi_topk_fvu/{name}"] = avg_multi_topk_fvu[name]
+                            avg_multi_topk_fvu[name] += float(
+                                self.maybe_all_reduce(out.multi_topk_fvu.detach()) / denom
+                            )
 
-                    avg_auxk_loss.clear()
-                    avg_fvu.clear()
-                    avg_multi_topk_fvu.clear()
+                        loss = out.fvu + self.cfg.auxk_alpha * out.auxk_loss + out.multi_topk_fvu / 8
+                        loss.div(acc_steps).backward()
 
-                    if self.cfg.distribute_modules:
-                        outputs = [{} for _ in range(dist.get_world_size())]
-                        dist.gather_object(info, outputs if rank_zero else None)
-                        info.update({k: v for out in outputs for k, v in out.items()})
+                        # Update the did_fire mask
+                        did_fire[name][out.latent_indices.flatten()] = True
+                        self.maybe_all_reduce(did_fire[name], "max")  # max is boolean "any"
 
-                    if rank_zero:
-                        wandb.log(info, step=step)
+                    # Clip gradient norm independently for each SAE
+                    torch.nn.utils.clip_grad_norm_(raw.parameters(), 1.0)
 
-                if (step + 1) % self.cfg.save_every == 0:
-                    self.save()
-                
-            self.global_step += 1
-            pbar.update()
+                # Check if we need to actually do a training step
+                step, substep = divmod(self.global_step + 1, self.cfg.grad_acc_steps)
+                if substep == 0:
+                    if self.cfg.sae.normalize_decoder and not self.cfg.transcode:
+                        for sae in self.saes.values():
+                            sae.remove_gradient_parallel_to_decoder_directions()
+
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    self.lr_scheduler.step()
+
+                    ###############
+                    with torch.no_grad():
+                        # Update the dead feature mask
+                        for name, counts in self.num_tokens_since_fired.items():
+                            counts += num_tokens_in_step
+                            counts[did_fire[name]] = 0
+
+                        # Reset stats for this step
+                        num_tokens_in_step = 0
+                        for mask in did_fire.values():
+                            mask.zero_()
+
+                    if (
+                        self.cfg.log_to_wandb
+                        and (step + 1) % self.cfg.wandb_log_frequency == 0
+                    ):
+                        info = {}
+
+                        for name in self.saes:
+                            mask = (
+                                self.num_tokens_since_fired[name]
+                                > self.cfg.dead_feature_threshold
+                            )
+
+                            info.update(
+                                {
+                                    f"fvu/{name}": avg_fvu[name],
+                                    f"dead_pct/{name}": mask.mean(
+                                        dtype=torch.float32
+                                    ).item(),
+                                }
+                            )
+                            if self.cfg.auxk_alpha > 0:
+                                info[f"auxk/{name}"] = avg_auxk_loss[name]
+                            if self.cfg.sae.multi_topk:
+                                info[f"multi_topk_fvu/{name}"] = avg_multi_topk_fvu[name]
+
+                        avg_auxk_loss.clear()
+                        avg_fvu.clear()
+                        avg_multi_topk_fvu.clear()
+
+                        if self.cfg.distribute_modules:
+                            outputs = [{} for _ in range(dist.get_world_size())]
+                            dist.gather_object(info, outputs if rank_zero else None)
+                            info.update({k: v for out in outputs for k, v in out.items()})
+
+                        if rank_zero:
+                            wandb.log(info, step=step)
+
+                    if (step + 1) % self.cfg.save_every == 0:
+                        self.save()
+                    
+                self.global_step += 1
+                pbar.update()
 
         self.save()
         pbar.close()

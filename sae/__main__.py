@@ -19,6 +19,9 @@ class RunConfig(TrainConfig):
     device: str = "cuda"
     """Device to be used for training."""
     
+    num_epochs: int=5
+    """Epochs for training"""
+    
     dataset: str = field(
         default="/net/tscratch/people/plgkingak/weights2weights/weights_datasets/mid_block",
         positional=True,
