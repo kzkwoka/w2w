@@ -31,6 +31,9 @@ class TrainConfig(Serializable):
 
     batch_size: int = 8
     """Batch size measured in sequences."""
+    
+    eval_batch_size: int = 8
+    """Batch size measured in base diffusion models."""
 
     grad_acc_steps: int = 1
     """Number of steps over which to accumulate gradients."""

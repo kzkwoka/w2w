@@ -27,6 +27,12 @@ class RunConfig(TrainConfig):
         positional=True,
     )
     """Path to the dataset to use for training."""
+    
+    eval_dataset: str = field(
+        default="/net/tscratch/people/plgkingak/weights2weights/weights_datasets/full/6",
+        positional=True,
+    )
+    """Path to the dataset to use for evaluating reconstruction."""
 
     input_width: int = 9728
     """Input tensor length to use for training."""
@@ -126,10 +132,12 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
     return model, dataset
 
 
-def load_custom_dataset(args: RunConfig) -> Dataset | MemmapDataset:
+def load_custom_dataset(args: RunConfig, eval=False, in_memory=False) -> Dataset | MemmapDataset:
+    d = args.dataset if not eval else args.eval_dataset
+    print(d)
     try:
         dataset = load_dataset(
-            args.dataset,
+            d,
             split=args.split,
             # TODO: Maybe set this to False by default? But RPJ requires it.
             trust_remote_code=True,
@@ -137,7 +145,7 @@ def load_custom_dataset(args: RunConfig) -> Dataset | MemmapDataset:
     except ValueError as e:
         # Automatically use load_from_disk if appropriate
         if "load_from_disk" in str(e):
-            dataset = Dataset.load_from_disk(args.dataset, keep_in_memory=False)
+            dataset = Dataset.load_from_disk(d, keep_in_memory=in_memory)
         else:
             raise e
 
@@ -168,6 +176,7 @@ def run():
     if not ddp or rank == 0:
         # model, dataset = load_artifacts(args, rank)
         dataset = load_custom_dataset(args)
+        eval_dataset = load_custom_dataset(args, eval=True)
     if ddp:
         dist.barrier()
         if rank != 0:
@@ -180,7 +189,7 @@ def run():
         print(f"Training on '{args.dataset}' (split '{args.split}')")
         # print(f"Storing model weights in {model.dtype}")
 
-        trainer = SaeTrainer(args, dataset)
+        trainer = SaeTrainer(args, dataset, eval_dataset)
         if args.resume:
             trainer.load_state(args.run_name or "sae-ckpts")
         elif args.finetune:
