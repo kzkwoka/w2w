@@ -12,7 +12,9 @@ slurm-*.out
 sae-ckpts/
 wandb/
 run_*/
+runs/
 
 # Outfiles
 example/
 output/
+base_model/

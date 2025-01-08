@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import PreTrainedModel, get_linear_schedule_with_warmup
 
+from sae.metrics import calculate_similarity, extract_input_batch, get_latents, unflatten_batch, update_extracted_batch
+
 from .config import TrainConfig
 from .data import MemmapDataset
 from .sae import Sae
@@ -23,11 +25,12 @@ from .utils import geometric_median, get_layer_list, resolve_widths
 plt.style.use("seaborn-v0_8-colorblind")
 class SaeTrainer:
     def __init__(
-        self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset
+        self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset, eval_dataset: HfDataset | MemmapDataset, 
     ):
 
         self.cfg = cfg
         self.dataset = dataset
+        self.eval_dataset = eval_dataset
         self.distribute_modules()
 
         assert isinstance(dataset, Sized)
@@ -141,6 +144,14 @@ class SaeTrainer:
             # be shuffled before passing it to the trainer.
             shuffle=False,
         )
+        
+        eval_dl = DataLoader(
+            self.eval_dataset,
+            batch_size=self.cfg.eval_batch_size,
+            shuffle=False
+        )
+        latents = get_latents(self.device)
+        
         pbar = tqdm(
             desc="Training", 
             disable=not rank_zero, 
@@ -344,6 +355,23 @@ class SaeTrainer:
                                 plt.tight_layout()
                                 info[f"feature_density/{name}"] = wandb.Image(plt.gcf())
                                 plt.close()
+                                
+                            if (step + 1) % (self.cfg.wandb_log_frequency * 10) == 0:
+                                batch_iterator = iter(eval_dl)
+                                flat_weights = next(batch_iterator)["data"]
+                                weights = unflatten_batch(flat_weights)
+                                                             
+                                keys, weights_in, shapes = extract_input_batch(weights)
+                                for name in self.saes:
+                                    self.saes[name].eval()
+                                    weights_out = self.saes[name](weights_in.to(self.device)).sae_out
+                                    self.saes[name].train()
+                                
+                                    new_weights = update_extracted_batch(weights, weights_out, keys, shapes)
+                                    
+                                    mse, lpips = calculate_similarity(weights, new_weights, latents, self.device)
+                                    info[f"eval_mse/{name}"] = mse
+                                    info[f"eval_lpips/{name}"] = lpips
 
                         avg_auxk_loss.clear()
                         avg_fvu.clear()
