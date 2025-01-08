@@ -19,7 +19,7 @@ class RunConfig(TrainConfig):
     device: str = "cuda"
     """Device to be used for training."""
     
-    num_epochs: int=5
+    num_epochs: int=1
     """Epochs for training"""
     
     dataset: str = field(

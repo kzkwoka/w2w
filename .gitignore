@@ -6,10 +6,12 @@ w2w/
 
 # Job logs
 slurm_jobdir/
+slurm-*.out
 
 #Checkpoints
 sae-ckpts/
 wandb/
+run_*/
 
 # Outfiles
 example/

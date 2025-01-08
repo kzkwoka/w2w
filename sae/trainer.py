@@ -1,6 +1,7 @@
 from collections import defaultdict
 from dataclasses import asdict
 from typing import Sized
+from matplotlib import pyplot as plt
 
 import torch
 import torch.distributed as dist
@@ -19,7 +20,7 @@ from .data import MemmapDataset
 from .sae import Sae
 from .utils import geometric_median, get_layer_list, resolve_widths
 
-
+plt.style.use("seaborn-v0_8-colorblind")
 class SaeTrainer:
     def __init__(
         self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset
@@ -73,7 +74,7 @@ class SaeTrainer:
         }
         self.optimizer = Adam(pgs)
         self.lr_scheduler = get_linear_schedule_with_warmup(
-            self.optimizer, cfg.lr_warmup_steps, num_examples // cfg.batch_size
+            self.optimizer, cfg.lr_warmup_steps, (num_examples // cfg.batch_size) * cfg.num_epochs
         )
 
     def load_state(self, path: str):
@@ -123,7 +124,7 @@ class SaeTrainer:
         print(f"Number of SAE parameters: {num_sae_params:_}")
         # print(f"Number of model parameters: {num_model_params:_}")
 
-        num_batches = len(self.dataset) // self.cfg.batch_size
+        num_batches = (len(self.dataset) // self.cfg.batch_size) * self.cfg.num_epochs
         if self.global_step > 0:
             assert hasattr(self.dataset, "select"), "Dataset must implement `select`"
 
@@ -162,6 +163,7 @@ class SaeTrainer:
         output_dict: dict[str, Tensor] = {}
         
         maybe_wrapped: dict[str, DDP] | dict[str, Sae] = {}
+        frac_active_list = []  # track active features
 
         for _ in range(self.cfg.num_epochs):
             
@@ -170,7 +172,7 @@ class SaeTrainer:
                 output_dict.clear()
 
                 # Bookkeeping for dead feature detection
-                num_tokens_in_step += batch["data"].numel()
+                num_tokens_in_step += batch["data"].shape[0]
                 
                 # Load data to input and output dict
                 input_dict = {0: batch["data"].to(self.device)}
@@ -287,6 +289,36 @@ class SaeTrainer:
                                 self.num_tokens_since_fired[name]
                                 > self.cfg.dead_feature_threshold
                             )
+                            fire_count = torch.zeros(
+                                self.saes[name].num_latents, dtype=torch.long
+                            )
+                            unique, unique_counts = torch.unique(
+                                out.latent_indices.flatten(),
+                                return_counts=True,
+                            )
+                            fire_count[unique] = unique_counts.cpu()
+                            frac_active_list.append(fire_count)
+
+                            if len(frac_active_list) > self.cfg.feature_sampling_window:
+                                frac_active_in_window = torch.stack(
+                                    frac_active_list[
+                                        -self.cfg.feature_sampling_window :
+                                    ],
+                                    dim=0,
+                                )
+                                feature_sparsity = frac_active_in_window.sum(0) / (
+                                    self.cfg.feature_sampling_window
+                                    * self.cfg.batch_size
+                                )
+                            else:
+                                frac_active_in_window = torch.stack(
+                                    frac_active_list, dim=0
+                                )
+                                feature_sparsity = frac_active_in_window.sum(0) / (
+                                    len(frac_active_list) * self.cfg.batch_size
+                                )
+
+                            log_feature_sparsity = torch.log10(feature_sparsity + 1e-8)
 
                             info.update(
                                 {
@@ -300,6 +332,18 @@ class SaeTrainer:
                                 info[f"auxk/{name}"] = avg_auxk_loss[name]
                             if self.cfg.sae.multi_topk:
                                 info[f"multi_topk_fvu/{name}"] = avg_multi_topk_fvu[name]
+                            if (step + 1) % (self.cfg.wandb_log_frequency * 10) == 0:
+                                plt.hist(
+                                    log_feature_sparsity.tolist(),
+                                    bins=50,
+                                    color="blue",
+                                    alpha=0.7,
+                                )
+                                plt.title("Feature Density")
+                                plt.xlabel("Log Feature Density")
+                                plt.tight_layout()
+                                info[f"feature_density/{name}"] = wandb.Image(plt.gcf())
+                                plt.close()
 
                         avg_auxk_loss.clear()
                         avg_fvu.clear()
