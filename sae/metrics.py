@@ -38,8 +38,8 @@ def load_base_pipeline(device="cuda"):
 def generate_images(weights, latents, device="cuda"):
     images = []
     transform = transforms.ToTensor()
+    pipe = load_base_pipeline(device)
     for row in weights:
-        pipe = load_base_pipeline(device)
         pipe.unet.load_state_dict(row, strict = False)
         pipe.to(device)
         images.append(transform(pipe(
@@ -48,24 +48,24 @@ def generate_images(weights, latents, device="cuda"):
             guidance_scale=guidance_scale, 
             negative_prompt=negative_prompt, 
             latents=latents).images[0]))
-    return images
+    return torch.stack(images)
     
     
 def calculate_similarity(weights, new_weights, latents, device="cuda"):
     images0 = generate_images(weights, latents, device)
     images1 = generate_images(new_weights, latents, device)
     
-    mse = torch.mean((images0 - images1) ** 2, dim=1) #TODO: check
-   
+    mse = torch.mean((images0 - images1) ** 2)
+
     lpips = LPIPS(net_type='squeeze', normalize=True)
-    mlpips = lpips(images0.unsqueeze(0), images1.unsqueeze(0))
+    mlpips = lpips(images0, images1)
     return mse, mlpips
 
 
 def unflatten_batch(batch):
     batch_unflattened = []
     for row in batch:
-        batch_unflattened.append(unflatten(row))
+        batch_unflattened.append(unflatten(row.unsqueeze(0)))
     return batch_unflattened
     
 
@@ -96,13 +96,13 @@ def extract_input_batch(batch, keyword="mid_block"):
         batch_keys.append(keys)
         batch_values.append(values)
         batch_shapes.append(shapes)
-    return batch_keys, batch_values, batch_shapes
+    return batch_keys, torch.stack(batch_values), batch_shapes
 
 def extract_input(base_weights, keyword="mid_block"):
     keys = [k for k in base_weights.keys() if keyword in k]
     values = [base_weights[k].flatten() for k in keys]
     shapes = {k: base_weights[k].shape for k in keys}
-    return keys, values, shapes
+    return keys, torch.cat(values), shapes
 
 def update_extracted_batch(base_weights, weights_out, keys, shapes):
     new_weights = []

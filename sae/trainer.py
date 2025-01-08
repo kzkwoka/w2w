@@ -358,13 +358,13 @@ class SaeTrainer:
                                 
                             if (step + 1) % (self.cfg.wandb_log_frequency * 10) == 0:
                                 batch_iterator = iter(eval_dl)
-                                flat_weights = next(batch_iterator)
+                                flat_weights = next(batch_iterator)["data"]
                                 weights = unflatten_batch(flat_weights)
                                                              
                                 keys, weights_in, shapes = extract_input_batch(weights)
                                 for name in self.saes:
                                     self.saes[name].eval()
-                                    weights_out = self.saes[name](weights_in).sae_out
+                                    weights_out = self.saes[name](weights_in.to(self.device)).sae_out
                                     self.saes[name].train()
                                 
                                     new_weights = update_extracted_batch(weights, weights_out, keys, shapes)
