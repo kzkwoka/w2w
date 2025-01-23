@@ -51,13 +51,10 @@ def generate_images(weights, latents, device="cuda"):
     return torch.stack(images)
     
     
-def calculate_similarity(weights, new_weights, latents, device="cuda"):
-    images0 = generate_images(weights, latents, device)
-    images1 = generate_images(new_weights, latents, device)
-    
+def calculate_similarity(images0, images1):
     mse = torch.mean((images0 - images1) ** 2)
 
-    lpips = LPIPS(net_type='squeeze', normalize=True)
+    lpips = LPIPS(net_type='vgg', normalize=True)
     mlpips = lpips(images0, images1)
     return mse, mlpips
 

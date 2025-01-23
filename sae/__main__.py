@@ -29,7 +29,7 @@ class RunConfig(TrainConfig):
     """Path to the dataset to use for training."""
     
     eval_dataset: str = field(
-        default="/net/tscratch/people/plgkingak/weights2weights/weights_datasets/full/6",
+        default="/net/tscratch/people/plgkingak/weights2weights/weights_datasets/evaluation_samples.pt",
         positional=True,
     )
     """Path to the dataset to use for evaluating reconstruction."""
@@ -176,12 +176,13 @@ def run():
     if not ddp or rank == 0:
         # model, dataset = load_artifacts(args, rank)
         dataset = load_custom_dataset(args)
-        eval_dataset = load_custom_dataset(args, eval=True)
+        eval_dataset = torch.load(args.eval_dataset)
     if ddp:
         dist.barrier()
         if rank != 0:
             # model, dataset = load_artifacts(args, rank)
             dataset = load_custom_dataset(args)
+            eval_dataset = torch.load(args.eval_dataset)
         dataset = dataset.shard(dist.get_world_size(), rank)
 
     # Prevent ranks other than 0 from printing

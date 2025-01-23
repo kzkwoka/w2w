@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import PreTrainedModel, get_linear_schedule_with_warmup
 
-from sae.metrics import calculate_similarity, extract_input_batch, get_latents, unflatten_batch, update_extracted_batch
+from sae.metrics import calculate_similarity, extract_input_batch, generate_images, get_latents, unflatten_batch, update_extracted_batch
 
 from .config import TrainConfig
 from .data import MemmapDataset
@@ -25,7 +25,7 @@ from .utils import geometric_median, get_layer_list, resolve_widths
 plt.style.use("seaborn-v0_8-colorblind")
 class SaeTrainer:
     def __init__(
-        self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset, eval_dataset: HfDataset | MemmapDataset, 
+        self, cfg: TrainConfig, dataset: HfDataset | MemmapDataset, eval_dataset: Tensor, 
     ):
 
         self.cfg = cfg
@@ -35,6 +35,7 @@ class SaeTrainer:
 
         assert isinstance(dataset, Sized)
         num_examples = len(dataset)
+        self.training_steps = (num_examples // cfg.batch_size) * cfg.num_epochs
 
         self.device = self.cfg.device
         input_widths = self.cfg.input_width
@@ -77,7 +78,7 @@ class SaeTrainer:
         }
         self.optimizer = Adam(pgs)
         self.lr_scheduler = get_linear_schedule_with_warmup(
-            self.optimizer, cfg.lr_warmup_steps, (num_examples // cfg.batch_size) * cfg.num_epochs
+            self.optimizer, cfg.lr_warmup_steps, self.training_steps
         )
 
     def load_state(self, path: str):
@@ -127,7 +128,7 @@ class SaeTrainer:
         print(f"Number of SAE parameters: {num_sae_params:_}")
         # print(f"Number of model parameters: {num_model_params:_}")
 
-        num_batches = (len(self.dataset) // self.cfg.batch_size) * self.cfg.num_epochs
+        num_batches = self.training_steps
         if self.global_step > 0:
             assert hasattr(self.dataset, "select"), "Dataset must implement `select`"
 
@@ -145,12 +146,10 @@ class SaeTrainer:
             shuffle=False,
         )
         
-        eval_dl = DataLoader(
-            self.eval_dataset,
-            batch_size=self.cfg.eval_batch_size,
-            shuffle=False
-        )
+        eval_weights = unflatten_batch(self.eval_dataset)
+        keys, weights_in, shapes = extract_input_batch(eval_weights)
         latents = get_latents(self.device)
+        images0 = generate_images(eval_weights, latents, device)
         
         pbar = tqdm(
             desc="Training", 
@@ -356,22 +355,35 @@ class SaeTrainer:
                                 info[f"feature_density/{name}"] = wandb.Image(plt.gcf())
                                 plt.close()
                                 
-                            if (step + 1) % (self.cfg.wandb_log_frequency * 10) == 0:
-                                batch_iterator = iter(eval_dl)
-                                flat_weights = next(batch_iterator)["data"]
-                                weights = unflatten_batch(flat_weights)
-                                                             
-                                keys, weights_in, shapes = extract_input_batch(weights)
-                                for name in self.saes:
-                                    self.saes[name].eval()
-                                    weights_out = self.saes[name](weights_in.to(self.device)).sae_out
-                                    self.saes[name].train()
+                            if (step + 1) % (self.cfg.wandb_log_frequency * (10 if self.training_steps < 600 else 100)) == 0:
+                                self.saes[name].eval()
+                                weights_out = self.saes[name](weights_in.to(self.device)).sae_out
+                                self.saes[name].train()
+                            
+                                new_weights = update_extracted_batch(eval_weights, weights_out, keys, shapes)
                                 
-                                    new_weights = update_extracted_batch(weights, weights_out, keys, shapes)
-                                    
-                                    mse, lpips = calculate_similarity(weights, new_weights, latents, self.device)
-                                    info[f"eval_mse/{name}"] = mse
-                                    info[f"eval_lpips/{name}"] = lpips
+                                images1 = generate_images(new_weights, latents, device)
+                                mse, lpips = calculate_similarity(images0, images1)
+
+                                info[f"eval_mse/{name}"] = mse
+                                info[f"eval_lpips/{name}"] = lpips
+
+                                # Select the first image from each tensor
+                                img0 = images0[0].permute(1, 2, 0).numpy()  # Rearrange to [Height, Width, Channels]
+                                img1 = images1[0].permute(1, 2, 0).numpy()
+
+                                plt.subplot(1, 2, 1)
+                                plt.imshow(img0)
+                                plt.title("Original")
+                                plt.axis('off')
+                                plt.subplot(1, 2, 2)
+                                plt.imshow(img1)
+                                plt.title("Reconstructed")
+                                plt.axis('off')
+
+                                plt.tight_layout()
+                                info[f"reconstruction_image/{name}"] = wandb.Image(plt.gcf())
+                                plt.close()
 
                         avg_auxk_loss.clear()
                         avg_fvu.clear()
