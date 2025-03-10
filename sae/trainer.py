@@ -355,7 +355,7 @@ class SaeTrainer:
                                 info[f"feature_density/{name}"] = wandb.Image(plt.gcf())
                                 plt.close()
                                 
-                            if (step + 1) % (self.cfg.wandb_log_frequency * (10 if self.training_steps < 600 else 100)) == 0:
+                            if (step == 0) or ((step + 1) % (self.cfg.wandb_log_frequency * (10 if self.training_steps < 600 else 100)) == 0):
                                 self.saes[name].eval()
                                 weights_out = self.saes[name](weights_in.to(self.device)).sae_out
                                 self.saes[name].train()
@@ -368,22 +368,22 @@ class SaeTrainer:
                                 info[f"eval_mse/{name}"] = mse
                                 info[f"eval_lpips/{name}"] = lpips
 
-                                # Select the first image from each tensor
-                                img0 = images0[0].permute(1, 2, 0).numpy()  # Rearrange to [Height, Width, Channels]
-                                img1 = images1[0].permute(1, 2, 0).numpy()
+                                for i, (img0, img1) in enumerate(zip(images0, images1)):
+                                    img0 = img0.permute(1, 2, 0).numpy()  # Rearrange to [Height, Width, Channels]
+                                    img1 = img1.permute(1, 2, 0).numpy()
 
-                                plt.subplot(1, 2, 1)
-                                plt.imshow(img0)
-                                plt.title("Original")
-                                plt.axis('off')
-                                plt.subplot(1, 2, 2)
-                                plt.imshow(img1)
-                                plt.title("Reconstructed")
-                                plt.axis('off')
+                                    plt.subplot(1, 2, 1)
+                                    plt.imshow(img0)
+                                    plt.title("Original")
+                                    plt.axis('off')
+                                    plt.subplot(1, 2, 2)
+                                    plt.imshow(img1)
+                                    plt.title("Reconstructed")
+                                    plt.axis('off')
 
-                                plt.tight_layout()
-                                info[f"reconstruction_image/{name}"] = wandb.Image(plt.gcf())
-                                plt.close()
+                                    plt.tight_layout()
+                                    info[f"reconstruction_image/{name}/{i}"] = wandb.Image(plt.gcf())
+                                    plt.close()
 
                         avg_auxk_loss.clear()
                         avg_fvu.clear()
