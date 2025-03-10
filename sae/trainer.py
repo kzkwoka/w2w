@@ -147,7 +147,8 @@ class SaeTrainer:
         )
         
         eval_weights = unflatten_batch(self.eval_dataset)
-        keys, weights_in, shapes = extract_input_batch(eval_weights)
+        #TODO: fix passing this parameter
+        keys, weights_in, shapes = extract_input_batch(eval_weights, None ) # keyword="mid_block")
         latents = get_latents(self.device)
         images0 = generate_images(eval_weights, latents, device)
         
@@ -180,13 +181,15 @@ class SaeTrainer:
             for batch in dl:
                 input_dict.clear()
                 output_dict.clear()
-
+                
+                data = torch.tensor(batch["data"]) if not isinstance(batch["data"], torch.Tensor) else batch["data"]
+                
                 # Bookkeeping for dead feature detection
-                num_tokens_in_step += batch["data"].shape[0]
+                num_tokens_in_step += data.shape[0]
                 
                 # Load data to input and output dict
-                input_dict = {0: batch["data"].to(self.device)}
-                output_dict = {0: batch["data"].to(self.device)}
+                input_dict = {0: data.to(self.device)}
+                output_dict = {0: data.to(self.device)}
 
                 if self.cfg.distribute_modules:
                     input_dict = self.scatter_hiddens(input_dict)

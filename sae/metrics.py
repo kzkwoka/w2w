@@ -87,13 +87,16 @@ def unflatten(flattened_weights, weight_dimensions_path="weights2weights/weights
     return final_weights
 
 def extract_input_batch(batch, keyword="mid_block"):
-    batch_keys, batch_values, batch_shapes = [], [], []
-    for row in batch:
-        keys, values, shapes = extract_input(row, keyword)
-        batch_keys.append(keys)
-        batch_values.append(values)
-        batch_shapes.append(shapes)
-    return batch_keys, torch.stack(batch_values), batch_shapes
+    if keyword is not None:
+        batch_keys, batch_values, batch_shapes = [], [], []
+        for row in batch:
+            keys, values, shapes = extract_input(row, keyword)
+            batch_keys.append(keys)
+            batch_values.append(values)
+            batch_shapes.append(shapes)
+        return batch_keys, torch.stack(batch_values), batch_shapes
+    else:
+        return None, torch.stack([torch.cat([row[k].flatten() for k in row.keys()]) for row in batch]), None
 
 def extract_input(base_weights, keyword="mid_block"):
     keys = [k for k in base_weights.keys() if keyword in k]
@@ -103,17 +106,27 @@ def extract_input(base_weights, keyword="mid_block"):
 
 def update_extracted_batch(base_weights, weights_out, keys, shapes):
     new_weights = []
-    for b, w, k, s in zip(base_weights, weights_out, keys, shapes):
-        new_weights.append(update_extracted(b, w, k, s))
+    if keys is not None:
+        for b, w, k, s in zip(base_weights, weights_out, keys, shapes):
+            new_weights.append(update_extracted(b, w, k, s))
+    else:
+        for b, w in zip(base_weights, weights_out):
+            new_weights.append(update_extracted(b, w))
     return new_weights
 
-def update_extracted(weights, weights_out, keys, shapes):
+def update_extracted(weights, weights_out, keys=None, shapes=None):
     new_weights = deepcopy(weights)
     start_idx = 0
-
-    for key in keys:
-        shape = shapes[key]
-        end_idx = start_idx + torch.prod(torch.tensor(shape)).item()  # Calculate end index
-        new_weights[key] = weights_out[start_idx:end_idx].reshape(*shape)
-        start_idx = end_idx
+    if keys is None:
+        for key in weights.keys():
+            shape = weights[key].shape
+            end_idx = start_idx + torch.prod(torch.tensor(shape)).item()
+            new_weights[key] = weights_out[start_idx:end_idx].reshape(*shape)
+            start_idx = end_idx
+    else:
+        for key in keys:
+            shape = shapes[key]
+            end_idx = start_idx + torch.prod(torch.tensor(shape)).item()  # Calculate end index
+            new_weights[key] = weights_out[start_idx:end_idx].reshape(*shape)
+            start_idx = end_idx
     return new_weights
