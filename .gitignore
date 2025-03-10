@@ -16,5 +16,6 @@ runs/
 
 # Outfiles
 example/
+images/
 output/
-base_model/
+base_model*/
