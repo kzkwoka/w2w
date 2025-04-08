@@ -33,6 +33,14 @@ class RunConfig(TrainConfig):
         positional=True,
     )
     """Path to the dataset to use for evaluating reconstruction."""
+    
+    normalized: bool=True
+    """Whether training data used is normalized"""
+    
+    normalization_params: str = field(
+        default="/net/tscratch/people/plgkingak/weights2weights/weights_datasets/normalization",
+    )
+    """Path to normalization mean and std needed in evaluating reconstruction"""
 
     input_width: int = 9728
     """Input tensor length to use for training."""
@@ -70,66 +78,66 @@ class RunConfig(TrainConfig):
     """Number of processes to use for preprocessing data"""
 
 
-def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset]:
-    if args.load_in_8bit:
-        dtype = torch.float16
-    elif torch.cuda.is_bf16_supported():
-        dtype = torch.bfloat16
-    else:
-        dtype = "auto"
+# def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset]:
+#     if args.load_in_8bit:
+#         dtype = torch.float16
+#     elif torch.cuda.is_bf16_supported():
+#         dtype = torch.bfloat16
+#     else:
+#         dtype = "auto"
 
-    model = AutoModel.from_pretrained(
-        args.model,
-        device_map={"": f"cuda:{rank}"},
-        quantization_config=(
-            BitsAndBytesConfig(load_in_8bit=args.load_in_8bit)
-            if args.load_in_8bit
-            else None
-        ),
-        revision=args.revision,
-        torch_dtype=dtype,
-        token=args.hf_token,
-    )
+#     model = AutoModel.from_pretrained(
+#         args.model,
+#         device_map={"": f"cuda:{rank}"},
+#         quantization_config=(
+#             BitsAndBytesConfig(load_in_8bit=args.load_in_8bit)
+#             if args.load_in_8bit
+#             else None
+#         ),
+#         revision=args.revision,
+#         torch_dtype=dtype,
+#         token=args.hf_token,
+#     )
 
-    # For memmap-style datasets
-    if args.dataset.endswith(".bin"):
-        dataset = MemmapDataset(args.dataset, args.ctx_len, args.max_examples)
-    else:
-        # For Huggingface datasets
-        try:
-            dataset = load_dataset(
-                args.dataset,
-                split=args.split,
-                # TODO: Maybe set this to False by default? But RPJ requires it.
-                trust_remote_code=True,
-            )
-        except ValueError as e:
-            # Automatically use load_from_disk if appropriate
-            if "load_from_disk" in str(e):
-                dataset = Dataset.load_from_disk(args.dataset, keep_in_memory=False)
-            else:
-                raise e
+#     # For memmap-style datasets
+#     if args.dataset.endswith(".bin"):
+#         dataset = MemmapDataset(args.dataset, args.ctx_len, args.max_examples)
+#     else:
+#         # For Huggingface datasets
+#         try:
+#             dataset = load_dataset(
+#                 args.dataset,
+#                 split=args.split,
+#                 # TODO: Maybe set this to False by default? But RPJ requires it.
+#                 trust_remote_code=True,
+#             )
+#         except ValueError as e:
+#             # Automatically use load_from_disk if appropriate
+#             if "load_from_disk" in str(e):
+#                 dataset = Dataset.load_from_disk(args.dataset, keep_in_memory=False)
+#             else:
+#                 raise e
 
-        assert isinstance(dataset, Dataset)
-        if "input_ids" not in dataset.column_names:
-            tokenizer = AutoTokenizer.from_pretrained(args.model, token=args.hf_token)
-            dataset = chunk_and_tokenize(
-                dataset,
-                tokenizer,
-                max_seq_len=args.ctx_len,
-                num_proc=args.data_preprocessing_num_proc,
-            )
-        else:
-            print("Dataset already tokenized; skipping tokenization.")
+#         assert isinstance(dataset, Dataset)
+#         if "input_ids" not in dataset.column_names:
+#             tokenizer = AutoTokenizer.from_pretrained(args.model, token=args.hf_token)
+#             dataset = chunk_and_tokenize(
+#                 dataset,
+#                 tokenizer,
+#                 max_seq_len=args.ctx_len,
+#                 num_proc=args.data_preprocessing_num_proc,
+#             )
+#         else:
+#             print("Dataset already tokenized; skipping tokenization.")
 
-        print(f"Shuffling dataset with seed {args.seed}")
-        dataset = dataset.shuffle(args.seed)
+#         print(f"Shuffling dataset with seed {args.seed}")
+#         dataset = dataset.shuffle(args.seed)
 
-        dataset = dataset.with_format("torch")
-        if limit := args.max_examples:
-            dataset = dataset.select(range(limit))
+#         dataset = dataset.with_format("torch")
+#         if limit := args.max_examples:
+#             dataset = dataset.select(range(limit))
 
-    return model, dataset
+#     return model, dataset
 
 
 def load_custom_dataset(args: RunConfig, eval=False, in_memory=False) -> Dataset | MemmapDataset:

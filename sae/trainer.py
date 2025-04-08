@@ -13,7 +13,7 @@ from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import PreTrainedModel, get_linear_schedule_with_warmup
+from transformers import PreTrainedModel, get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 
 from sae.metrics import calculate_similarity, extract_input_batch, generate_images, get_latents, unflatten_batch, update_extracted_batch
 
@@ -30,6 +30,9 @@ class SaeTrainer:
 
         self.cfg = cfg
         self.dataset = dataset
+        if cfg.normalize:
+            self.mean = torch.load(f"{cfg.normalization_params}/mean.pt")
+            self.std = torch.load(f"{cfg.normalization_params}/std.pt")
         self.eval_dataset = eval_dataset
         self.distribute_modules()
 
@@ -147,10 +150,12 @@ class SaeTrainer:
         )
         
         eval_weights = unflatten_batch(self.eval_dataset)
-        #TODO: fix passing this parameter
-        keys, weights_in, shapes = extract_input_batch(eval_weights, None ) # keyword="mid_block")
+        keys, weights_in, shapes = extract_input_batch(eval_weights, None )
         latents = get_latents(self.device)
         images0 = generate_images(eval_weights, latents, device)
+        if hasattr(self, 'mean') and hasattr(self, 'std'):
+            #After generating base images normalize input for model
+            self.eval_dataset.sub_(self.mean).div_(self.std)
         
         pbar = tqdm(
             desc="Training", 
@@ -331,7 +336,7 @@ class SaeTrainer:
                                     len(frac_active_list) * self.cfg.batch_size
                                 )
 
-                            log_feature_sparsity = torch.log10(feature_sparsity + 1e-8)
+                            self.log_feature_sparsity = torch.log10(feature_sparsity + 1e-8)
 
                             info.update(
                                 {
@@ -347,7 +352,7 @@ class SaeTrainer:
                                 info[f"multi_topk_fvu/{name}"] = avg_multi_topk_fvu[name]
                             if (step + 1) % (self.cfg.wandb_log_frequency * 10) == 0:
                                 plt.hist(
-                                    log_feature_sparsity.tolist(),
+                                    self.log_feature_sparsity.tolist(),
                                     bins=50,
                                     color="blue",
                                     alpha=0.7,
@@ -361,6 +366,8 @@ class SaeTrainer:
                             if (step == 0) or ((step + 1) % (self.cfg.wandb_log_frequency * (10 if self.training_steps < 600 else 100)) == 0):
                                 self.saes[name].eval()
                                 weights_out = self.saes[name](weights_in.to(self.device)).sae_out
+                                if hasattr(self, 'mean') and hasattr(self, 'std'):
+                                    weights_out.mul_(self.std).add_(self.mean)
                                 self.saes[name].train()
                             
                                 new_weights = update_extracted_batch(eval_weights, weights_out, keys, shapes)
@@ -513,6 +520,8 @@ class SaeTrainer:
             }, f"{path}/state.pt")
 
             self.cfg.save_json(f"{path}/config.json")
+            
+            torch.save(self.log_feature_sparsity,  f"{path}/log_feat_sparsity.pt")
 
         # Barrier to ensure all ranks have saved before continuing
         if dist.is_initialized():
