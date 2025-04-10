@@ -30,7 +30,7 @@ class SaeTrainer:
 
         self.cfg = cfg
         self.dataset = dataset
-        if cfg.normalize:
+        if cfg.normalized:
             self.mean = torch.load(f"{cfg.normalization_params}/mean.pt")
             self.std = torch.load(f"{cfg.normalization_params}/std.pt")
         self.eval_dataset = eval_dataset
@@ -148,14 +148,16 @@ class SaeTrainer:
             # be shuffled before passing it to the trainer.
             shuffle=False,
         )
-        
-        eval_weights = unflatten_batch(self.eval_dataset)
-        keys, weights_in, shapes = extract_input_batch(eval_weights, None )
         latents = get_latents(self.device)
-        images0 = generate_images(eval_weights, latents, device)
+
+        base_weights = unflatten_batch(self.eval_dataset)
+        images0 = generate_images(base_weights, latents, device)
+    
         if hasattr(self, 'mean') and hasattr(self, 'std'):
             #After generating base images normalize input for model
             self.eval_dataset.sub_(self.mean).div_(self.std)
+        eval_weights = unflatten_batch(self.eval_dataset)
+        keys, weights_in, shapes = extract_input_batch(eval_weights, None )
         
         pbar = tqdm(
             desc="Training", 
@@ -367,6 +369,7 @@ class SaeTrainer:
                                 self.saes[name].eval()
                                 weights_out = self.saes[name](weights_in.to(self.device)).sae_out
                                 if hasattr(self, 'mean') and hasattr(self, 'std'):
+                                    #TODO: check if this doesnt change the dimesnions
                                     weights_out.mul_(self.std).add_(self.mean)
                                 self.saes[name].train()
                             
