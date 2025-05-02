@@ -75,3 +75,39 @@ def get_image(weights, pipe, prompt, ddim_steps, guidance_scale, negative_prompt
 
 def add_error(err, weights):
     return {key: weights[key].cpu() + err[key] for key in err}
+
+
+#---------------------------------------- norm utils ---------------
+def get_group_indices(df, group_columns=["block_type","block_number"], return_names=False, device='cuda'):
+    df = df.sort_values(by=group_columns + ["start"])
+    group_indices = []
+    group_names = []
+
+    for group_vals, group_df in df.groupby(group_columns):
+        group_name = ".".join(map(str, group_vals))  # e.g., "attn_proj.lora_ab"
+        cols = []
+        for _, row in group_df.iterrows():
+            cols.extend(range(row['start'], row['end']))
+        group_indices.append(torch.tensor(cols, dtype=torch.long, device=device))
+        group_names.append(group_name)
+    
+    if return_names:
+        return group_indices, group_names
+    
+    return group_indices
+
+def get_group_norms(group_indices, W_dec, input_group_norms):
+    group_norms = []
+
+    for i, idx in enumerate(group_indices):
+        # Efficiently select columns using precomputed index tensor
+        group_block = torch.index_select(W_dec, dim=1, index=idx)
+        group_len = idx.numel()
+        # Normalize by length
+        norm = group_block.norm(dim=1) / (group_len ** 0.5)
+        # Normalize by input data
+        if input_group_norms is not None:
+            norm /= input_group_norms[i]
+        group_norms.append(norm)
+
+    return torch.stack(group_norms, dim=1)
