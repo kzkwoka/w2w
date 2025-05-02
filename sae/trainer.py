@@ -176,6 +176,7 @@ class SaeTrainer:
         avg_auxk_loss = defaultdict(float)
         avg_fvu = defaultdict(float)
         avg_multi_topk_fvu = defaultdict(float)
+        avg_per_block_loss = defaultdict(float)
 
         input_dict: dict[str, Tensor] = {}
         output_dict: dict[str, Tensor] = {}
@@ -264,8 +265,12 @@ class SaeTrainer:
                             avg_multi_topk_fvu[name] += float(
                                 self.maybe_all_reduce(out.multi_topk_fvu.detach()) / denom
                             )
+                        if self.cfg.sae.per_block_norm is not None:
+                            avg_per_block_loss[name] += float(
+                                self.maybe_all_reduce(out.per_block_norm.detach()) / denom
+                            )
 
-                        loss = out.fvu + self.cfg.auxk_alpha * out.auxk_loss + out.multi_topk_fvu / 8
+                        loss = out.fvu + self.cfg.auxk_alpha * out.auxk_loss + out.multi_topk_fvu / 8 + out.per_block_norm
                         loss.div(acc_steps).backward()
 
                         # Update the did_fire mask
@@ -352,6 +357,8 @@ class SaeTrainer:
                                 info[f"auxk/{name}"] = avg_auxk_loss[name]
                             if self.cfg.sae.multi_topk:
                                 info[f"multi_topk_fvu/{name}"] = avg_multi_topk_fvu[name]
+                            if self.cfg.sae.per_block_norm:
+                                info[f"per_block_norm/{name}"] = avg_per_block_loss[name]
                             if (step + 1) % (self.cfg.wandb_log_frequency * 10) == 0:
                                 plt.hist(
                                     self.log_feature_sparsity.tolist(),
@@ -401,6 +408,7 @@ class SaeTrainer:
                         avg_auxk_loss.clear()
                         avg_fvu.clear()
                         avg_multi_topk_fvu.clear()
+                        avg_per_block_loss.clear()
 
                         if self.cfg.distribute_modules:
                             outputs = [{} for _ in range(dist.get_world_size())]

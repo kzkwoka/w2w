@@ -39,6 +39,9 @@ class ForwardOutput(NamedTuple):
 
     multi_topk_fvu: Tensor
     """Multi-TopK FVU, if applicable."""
+    
+    per_block_norm: Tensor
+    """Crosscoder style per LoRA block norm (normalised), if applicable."""
 
 
 class Sae(nn.Module):
@@ -64,6 +67,15 @@ class Sae(nn.Module):
             self.set_decoder_norm_to_unit_norm()
 
         self.b_dec = nn.Parameter(torch.zeros(d_in, dtype=dtype, device=device))
+        
+        self.group_indices = self.get_group_indices(torch.load(cfg.block_df_path), device=device)
+        self.input_group_norms = torch.load(cfg.group_norms_path).to(device)
+        if len(self.group_indices) != self.input_group_norms.shape[0]:
+            raise ValueError(
+                f"Mismatch between group indices shape and group norms shape: "
+                f"{len(self.group_indices)} indices vs {self.input_group_norms.shape[0]} norms."
+                f"Ensure the groups are the same."
+            )
 
     @staticmethod
     def load_many(
@@ -238,7 +250,17 @@ class Sae(nn.Module):
             multi_topk_fvu = (sae_out - y).pow(2).sum() / total_variance
         else:
             multi_topk_fvu = sae_out.new_tensor(0.0)
-
+        
+        if self.cfg.per_block_norm is not None:
+            per_block_norms = self.get_block_norms()
+            if self.cfg.per_block_norm == "l2":
+                row_sums = per_block_norms.sum(dim=1)
+                per_block_norm_loss = (row_sums - 1.0).pow(2).mean()
+            elif self.cfg.per_block_norm == "l1":
+                per_block_norm_loss = per_block_norms.sum(dim=1).mean() 
+        else:
+            per_block_norm_loss = sae_out.new_tensor(0.0)
+            
         return ForwardOutput(
             sae_out,
             top_acts,
@@ -246,7 +268,27 @@ class Sae(nn.Module):
             fvu,
             auxk_loss,
             multi_topk_fvu,
+            per_block_norm_loss
         )
+    
+    @torch.no_grad()
+    def get_block_norms(self):
+        group_norms = []
+
+        for i, idx in enumerate(self.group_indices):
+            # Efficiently select columns using precomputed index tensor
+            group_block = torch.index_select(self.W_dec, dim=1, index=idx)
+            group_len = idx.numel()
+            # Normalize by length
+            norm = group_block.norm(dim=1) / (group_len ** 0.5)
+            # Normalize by input data
+            if self.input_group_norms is not None:
+                norm /= self.input_group_norms[i]
+            group_norms.append(norm)
+
+        norm_matrix = torch.stack(group_norms, dim=1)  # [num_latents, num_groups]
+        return norm_matrix
+        
 
     @torch.no_grad()
     def set_decoder_norm_to_unit_norm(self):
@@ -271,3 +313,21 @@ class Sae(nn.Module):
             self.W_dec.data,
             "d_sae, d_sae d_in -> d_sae d_in",
         )
+
+    def get_group_indices(self, df, group_columns=["block_type","block_number"], return_names=False, device='cuda'):
+        df = df.sort_values(by=group_columns + ["start"])
+        group_indices = []
+        group_names = []
+
+        for group_vals, group_df in df.groupby(group_columns):
+            group_name = ".".join(map(str, group_vals))  # e.g., "attn_proj.lora_ab"
+            cols = []
+            for _, row in group_df.iterrows():
+                cols.extend(range(row['start'], row['end']))
+            group_indices.append(torch.tensor(cols, dtype=torch.long, device=device))
+            group_names.append(group_name)
+        
+        if return_names:
+            return group_indices, group_names
+        
+        return group_indices

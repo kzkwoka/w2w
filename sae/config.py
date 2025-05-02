@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-
+from typing import Optional, Literal
 from simple_parsing import Serializable, list_field
 
 
@@ -13,8 +13,14 @@ class SaeConfig(Serializable):
     """Multiple of the input dimension to use as the SAE dimension."""
 
     normalize_decoder: bool = True
-    """Normalize the decoder weights to have unit norm."""
-
+    """Normalize the full decoder weights to have unit norm."""
+    
+    per_block_norm: Optional[str] = None
+    """Normalize decoder weights per LoRA block. One of: 'l1', 'l2', or None."""
+    
+    block_df_path: str = "/net/tscratch/people/plgkingak/weights2weights/weights_datasets/weight_dimensions_extended_df.pt"
+    group_norms_path : str = "/net/tscratch/people/plgkingak/weights2weights/weights_datasets/group_norms.pt"
+    
     num_latents: int = 1000
     """Number of latents to use. If 0, use `expansion_factor`."""
 
