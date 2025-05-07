@@ -19,3 +19,5 @@ example/
 images/
 output/
 base_model*/
+
+notebooks/*.pt
