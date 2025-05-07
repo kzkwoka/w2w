@@ -22,7 +22,7 @@ def load_diffusion():
     pipe = DiffusionPipeline.from_pretrained("stablediffusionapi/realistic-vision-v51", 
                                             torch_dtype=torch.float16,safety_checker = None,
                                             requires_safety_checker = False).to(device)
-    
+    pipe.set_progress_bar_config(disable=True)
     pipe.unet = PeftModel.from_pretrained(pipe.unet, f"{model_path}/unet", adapter_name="identity1")
     pipe.unet.load_state_dict(base_weights, strict = False)
     pipe.to(device)
