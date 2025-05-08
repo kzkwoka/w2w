@@ -55,6 +55,9 @@ class TrainConfig(Serializable):
     auxk_alpha: float = 0.0
     """Weight of the auxiliary loss term."""
 
+    per_block_alpha: float = 0.0
+    """Weight of the per block norm loss term."""
+
     dead_feature_threshold: int = 10_000_000
     """Number of tokens after which a feature is considered dead."""
 

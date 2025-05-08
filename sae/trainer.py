@@ -270,7 +270,7 @@ class SaeTrainer:
                                 self.maybe_all_reduce(out.per_block_norm.detach()) / denom
                             )
 
-                        loss = out.fvu + self.cfg.auxk_alpha * out.auxk_loss + out.multi_topk_fvu / 8 + out.per_block_norm
+                        loss = out.fvu + self.cfg.auxk_alpha * out.auxk_loss + out.multi_topk_fvu / 8 + self.cfg.per_block_alpha * out.per_block_norm
                         loss.div(acc_steps).backward()
 
                         # Update the did_fire mask
