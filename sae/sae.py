@@ -253,11 +253,8 @@ class Sae(nn.Module):
         
         if self.cfg.per_block_norm is not None:
             per_block_norms = self.get_block_norms()
-            if self.cfg.per_block_norm == "l2":
-                row_sums = per_block_norms.sum(dim=1)
-                per_block_norm_loss = (row_sums - 1.0).pow(2).mean()
-            elif self.cfg.per_block_norm == "l1":
-                per_block_norm_loss = per_block_norms.sum(dim=1).mean() 
+            per_block_norms = per_block_norms[top_indices]  
+            per_block_norm_loss = per_block_norms.sum(dim=1).mean()
         else:
             per_block_norm_loss = sae_out.new_tensor(0.0)
             
@@ -271,16 +268,16 @@ class Sae(nn.Module):
             per_block_norm_loss
         )
     
-    @torch.no_grad()
     def get_block_norms(self):
         group_norms = []
+        p = 2 if self.cfg.per_block_norm == "l2" else 1
 
         for i, idx in enumerate(self.group_indices):
             # Efficiently select columns using precomputed index tensor
             group_block = torch.index_select(self.W_dec, dim=1, index=idx)
             group_len = idx.numel()
-            # Normalize by length
-            norm = group_block.norm(dim=1) / (group_len ** 0.5)
+            # Normalize by length (sqrt(n) for p=2, else n))
+            norm = group_block.norm(p=p, dim=1) / (group_len ** (1.0 / p))
             # Normalize by input data
             if self.input_group_norms is not None:
                 norm /= self.input_group_norms[i]

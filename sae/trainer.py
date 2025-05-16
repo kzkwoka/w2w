@@ -351,6 +351,7 @@ class SaeTrainer:
                                     f"dead_pct/{name}": mask.mean(
                                         dtype=torch.float32
                                     ).item(),
+                                    f"loss_total/{name}": loss.item()
                                 }
                             )
                             if self.cfg.auxk_alpha > 0:

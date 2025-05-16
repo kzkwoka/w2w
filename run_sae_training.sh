@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --account=plgdiffusion-gpu-a100
+#SBATCH --account=plggenerativepw3-gpu-a100
 #SBATCH -p plgrid-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --time=24:00:00
+#SBATCH --time=10:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=40G
 #SBATCH --output=logs/slurm-%j.out
@@ -25,7 +25,7 @@ i=0
 for num_latents in 5000; do
     for batch_size in 512; do
         for auxk_alpha in 0.03; do
-            for per_block_alpha in 10; do
+            for per_block_alpha in 0 0.1 0.5 1 10; do
                 for k in 256; do 
                     for epoch in 10; do
                         for grad in 1; do
@@ -45,6 +45,7 @@ for num_latents in 5000; do
                                         --normalize_decoder=False \
                                         --per_block_norm=$norm \
                                         --per_block_alpha=$per_block_alpha \
+                                        --group_norms_path=/net/tscratch/people/plgkingak/weights2weights/weights_datasets/group_norms_$norm.pt \
                                         --input_width=99648 \
                                         --normalized=False \
                                         '/net/tscratch/people/plgkingak/weights2weights/weights_datasets/full'
