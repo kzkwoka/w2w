@@ -23,13 +23,16 @@ cd weights2weights
 ln -s $cache_path/files ./files
 ln -s $cache_path/weights_datasets ./weights_datasets
 
-
+# cd $SCRATCH
+# git clone https://github.com/EleutherAI/sae.git
+# cd sae
+# pip install .
 ```
 
 ## Working in interactive mode
 ### Requesting a node
 ```bash
-srun --account=plggenerativepw2-gpu-a100 -p plgrid-gpu-a100 --nodes=1 --ntasks-per-node=1 --time=01:00:00 --gres gpu:1 --mem 40G --pty bash -i 
+srun --account=plggenerativepw3-gpu-a100 -p plgrid-gpu-a100 --nodes=1 --ntasks-per-node=1 --time=01:00:00 --gres gpu:1 --mem 40G --pty bash -i 
 ```
 
 ### On the allocated node
