@@ -252,11 +252,13 @@ class Sae(nn.Module):
             multi_topk_fvu = sae_out.new_tensor(0.0)
         
         if self.cfg.per_block_norm is not None:
-            per_block_norms = self.get_block_norms()
-            per_block_norms = per_block_norms[top_indices]  
-            per_block_norm_loss = per_block_norms.sum(dim=1).mean()
+            per_block_norms = self.get_block_norms() #top indices: [batch_size, k]
+            per_block_norms = per_block_norms[top_indices]  #per_block_norms: [batch_size, k, 7]
+            per_block_norm_loss = per_block_norms.sum(dim=-1).mean(dim=1).mean(dim=0)
         else:
             per_block_norm_loss = sae_out.new_tensor(0.0)
+
+    
             
         return ForwardOutput(
             sae_out,

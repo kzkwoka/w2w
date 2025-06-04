@@ -377,7 +377,6 @@ class SaeTrainer:
                                 self.saes[name].eval()
                                 weights_out = self.saes[name](weights_in.to(self.device)).sae_out
                                 if hasattr(self, 'mean') and hasattr(self, 'std'):
-                                    #TODO: check if this doesnt change the dimesnions
                                     weights_out.mul_(self.std).add_(self.mean)
                                 self.saes[name].train()
                             

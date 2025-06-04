@@ -58,7 +58,11 @@ def array_to_dict(weights, base_weights):
 def get_error(sae, sample, base_weights, with_weights=False):
     gt_weights = array_to_dict(sample, base_weights)
 
-    weights_out = sae(sample).sae_out
+    if sample.dim() == 1:
+        sample = sample.unsqueeze(0).unsqueeze(0)
+        weights_out = sae(sample).sae_out.squeeze(0).squeeze(0)
+    else:
+        weights_out = sae(sample).sae_out
     rec_weights = array_to_dict(weights_out, base_weights)
 
     err = {key: gt_weights[key].cpu() - rec_weights[key].cpu() for key in base_weights}
