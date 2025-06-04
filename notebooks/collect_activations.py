@@ -9,7 +9,7 @@ from sae import Sae
 path = "weights2weights/weights_datasets"
 device = "cuda"
 
-sae_path = "runs/run_lat5000_bs512_auxk0.03_k256_epoch10_1381189_0/0"
+sae_path = "runs/run_lat5000_bs512_auxk0.03_k256_epoch10_1423773_0/0"
 sae = Sae.load_from_disk(sae_path,device=device)
 sae.eval()
 
@@ -43,4 +43,4 @@ with torch.no_grad():
 
 activations = dict(zip(filenames, activations_tensor.cpu()))
 
-torch.save(activations, f"{path}/activations_crosscoder.pt")
+torch.save(activations, f"{path}/activations_20250528_coef10.pt")

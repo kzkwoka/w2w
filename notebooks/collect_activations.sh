@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --account=plgdiffusion-gpu-a100
+#SBATCH --account=plggenerativepw3-gpu-a100
 #SBATCH -p plgrid-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --time=24:00:00
+#SBATCH --time=3:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=40G
 #SBATCH --output=logs/slurm-%j.out
